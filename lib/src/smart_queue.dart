@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:math';
 
 import 'package:collection/collection.dart';
 
@@ -27,8 +26,8 @@ class SmartQueue {
     required QueueStore store,
     SmartQueueConfig config = const SmartQueueConfig(),
     Map<String, JobHandler>? handlers,
-  })  : _store = store,
-        _config = config {
+  }) : _store = store,
+       _config = config {
     if (handlers != null) {
       _handlers.addAll(handlers);
     }
