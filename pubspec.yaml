@@ -1,6 +1,6 @@
 name: smart_queue
 description: Lightweight job queue for Dart/Flutter. Handles offline tasks, retries, persistence.
-version: 0.0.1
+version: 0.1.0
 homepage: https://github.com/muhammadwaqasdev/smart_queue
 repository: https://github.com/muhammadwaqasdev/smart_queue
 issue_tracker: https://github.com/muhammadwaqasdev/smart_queue/issues
@@ -17,6 +17,8 @@ environment:
 dependencies:
   collection: ^1.18.0
   hive: ^2.2.3
+  dio: ^5.4.0
+  smart_request: ^0.1.0
 
 dev_dependencies:
   lints: ^5.0.0

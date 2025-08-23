@@ -14,22 +14,22 @@ abstract class RetryStrategy {
     double multiplier = 2.0,
     Duration maxDelay = const Duration(minutes: 5),
   }) => ExponentialRetryStrategy(
-        initialDelay: initialDelay,
-        multiplier: multiplier,
-        maxDelay: maxDelay,
-      );
+    initialDelay: initialDelay,
+    multiplier: multiplier,
+    maxDelay: maxDelay,
+  );
 
   factory RetryStrategy.exponentialWithJitter({
     Duration initialDelay = const Duration(milliseconds: 500),
     double multiplier = 2.0,
     Duration maxDelay = const Duration(minutes: 5),
   }) => JitterRetryStrategy(
-        ExponentialRetryStrategy(
-          initialDelay: initialDelay,
-          multiplier: multiplier,
-          maxDelay: maxDelay,
-        ),
-      );
+    ExponentialRetryStrategy(
+      initialDelay: initialDelay,
+      multiplier: multiplier,
+      maxDelay: maxDelay,
+    ),
+  );
 }
 
 class FixedRetryStrategy extends RetryStrategy {
@@ -53,7 +53,10 @@ class ExponentialRetryStrategy extends RetryStrategy {
 
   @override
   Duration nextDelay(int attempt) {
-    final double factor = pow(multiplier, (attempt - 1).clamp(0, 30)).toDouble();
+    final double factor = pow(
+      multiplier,
+      (attempt - 1).clamp(0, 30),
+    ).toDouble();
     final int millis = (initialDelay.inMilliseconds * factor).toInt();
     return Duration(milliseconds: min(millis, maxDelay.inMilliseconds));
   }

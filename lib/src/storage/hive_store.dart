@@ -6,11 +6,9 @@ import '../smart_job.dart';
 import 'queue_store.dart';
 
 class HiveStore implements QueueStore {
-  HiveStore({
-    required String boxName,
-    HiveInterface? hive,
-  })  : _boxName = boxName,
-        _hive = hive ?? Hive;
+  HiveStore({required String boxName, HiveInterface? hive})
+    : _boxName = boxName,
+      _hive = hive ?? Hive;
 
   final String _boxName;
   final HiveInterface _hive;
@@ -33,7 +31,9 @@ class HiveStore implements QueueStore {
   @override
   Future<List<SmartJob>> loadJobs() async {
     final Box<Map<dynamic, dynamic>> box = await _openBox();
-    return box.values.map((Map<dynamic, dynamic> m) => SmartJob.fromMap(m)).toList();
+    return box.values
+        .map((Map<dynamic, dynamic> m) => SmartJob.fromMap(m))
+        .toList();
   }
 
   @override
@@ -46,5 +46,42 @@ class HiveStore implements QueueStore {
   Future<void> removeJob(String id) async {
     final Box<Map<dynamic, dynamic>> box = await _openBox();
     await box.delete(id);
+  }
+
+  @override
+  Future<bool> tryAcquireLease(String id, String ownerId, Duration ttl) async {
+    final Box<Map<dynamic, dynamic>> box = await _openBox();
+    final Map<dynamic, dynamic>? existing = box.get(id);
+    if (existing == null) return false;
+    final DateTime now = DateTime.now();
+    final Map metadata = (existing['metadata'] as Map?) ?? <String, dynamic>{};
+    final String? currentOwner = metadata['leaseOwnerId'] as String?;
+    final DateTime? expiresAt = metadata['leaseExpiresAt'] is String
+        ? DateTime.tryParse(metadata['leaseExpiresAt'] as String)
+        : null;
+    if (expiresAt != null &&
+        expiresAt.isAfter(now) &&
+        currentOwner != ownerId) {
+      return false;
+    }
+    metadata['leaseOwnerId'] = ownerId;
+    metadata['leaseExpiresAt'] = now.add(ttl).toIso8601String();
+    existing['metadata'] = metadata;
+    await box.put(id, existing.cast<String, dynamic>());
+    return true;
+  }
+
+  @override
+  Future<void> releaseLease(String id, String ownerId) async {
+    final Box<Map<dynamic, dynamic>> box = await _openBox();
+    final Map<dynamic, dynamic>? existing = box.get(id);
+    if (existing == null) return;
+    final Map metadata = (existing['metadata'] as Map?) ?? <String, dynamic>{};
+    if (metadata['leaseOwnerId'] == ownerId) {
+      metadata.remove('leaseOwnerId');
+      metadata.remove('leaseExpiresAt');
+      existing['metadata'] = metadata;
+      await box.put(id, existing.cast<String, dynamic>());
+    }
   }
 }

@@ -4,3 +4,7 @@ export 'src/smart_queue.dart';
 export 'src/storage/hive_store.dart';
 export 'src/storage/memory_store.dart';
 export 'src/storage/queue_store.dart';
+export 'src/crypto/payload_cipher.dart';
+export 'src/events/queue_events.dart';
+export 'src/dlq/dead_letter_store.dart';
+export 'src/integrations/request_job.dart';

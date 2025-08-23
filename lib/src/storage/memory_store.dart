@@ -2,7 +2,8 @@ import '../smart_job.dart';
 import 'queue_store.dart';
 
 class MemoryStore implements QueueStore {
-  MemoryStore([List<SmartJob>? seed]) : _jobs = List<SmartJob>.from(seed ?? const <SmartJob>[]);
+  MemoryStore([List<SmartJob>? seed])
+    : _jobs = List<SmartJob>.from(seed ?? const <SmartJob>[]);
 
   final List<SmartJob> _jobs;
 
@@ -29,5 +30,41 @@ class MemoryStore implements QueueStore {
   @override
   Future<void> removeJob(String id) async {
     _jobs.removeWhere((SmartJob j) => j.id == id);
+  }
+
+  @override
+  Future<bool> tryAcquireLease(String id, String ownerId, Duration ttl) async {
+    final int idx = _jobs.indexWhere((SmartJob j) => j.id == id);
+    if (idx < 0) return false;
+    final SmartJob job = _jobs[idx];
+    final DateTime now = DateTime.now();
+    if (job.metadata != null) {
+      final String? currentOwner = job.metadata!['leaseOwnerId'] as String?;
+      final DateTime? expiresAt = job.metadata!['leaseExpiresAt'] is String
+          ? DateTime.tryParse(job.metadata!['leaseExpiresAt'] as String)
+          : null;
+      if (expiresAt != null &&
+          expiresAt.isAfter(now) &&
+          currentOwner != ownerId) {
+        return false;
+      }
+    }
+    (job.metadata ??= <String, dynamic>{})
+      ..['leaseOwnerId'] = ownerId
+      ..['leaseExpiresAt'] = now.add(ttl).toIso8601String();
+    _jobs[idx] = job;
+    return true;
+  }
+
+  @override
+  Future<void> releaseLease(String id, String ownerId) async {
+    final int idx = _jobs.indexWhere((SmartJob j) => j.id == id);
+    if (idx < 0) return;
+    final SmartJob job = _jobs[idx];
+    if (job.metadata != null && job.metadata!['leaseOwnerId'] == ownerId) {
+      job.metadata!.remove('leaseOwnerId');
+      job.metadata!.remove('leaseExpiresAt');
+      _jobs[idx] = job;
+    }
   }
 }

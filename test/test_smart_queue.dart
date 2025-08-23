@@ -62,4 +62,33 @@ void main() {
 
     expect(attempts, 3);
   });
+
+  test('selects higher priority first and emits events', () async {
+    final MemoryStore store = MemoryStore();
+    final SmartQueue queue = SmartQueue(
+      store: store,
+      config: const SmartQueueConfig(concurrency: 1),
+    );
+
+    final List<String> order = <String>[];
+    queue
+      ..registerHandler('a', (p) async => order.add('a'))
+      ..registerHandler('b', (p) async => order.add('b'));
+
+    final List<String> events = <String>[];
+    queue.events.listen((e) {
+      if (e is JobEnqueued) events.add('enq:${e.job.id}');
+      if (e is JobSucceeded) events.add('ok:${e.job.id}');
+    });
+
+    await queue.start();
+    await queue.add(SmartJob(id: 'low', type: 'a', priority: 1));
+    await queue.add(SmartJob(id: 'high', type: 'b', priority: 10));
+
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    expect(order, containsAllInOrder(<String>['b', 'a']));
+    expect(events.where((s) => s.startsWith('enq:')).toList().length, 2);
+    expect(events.where((s) => s.startsWith('ok:')).toList().length, 2);
+  });
 }

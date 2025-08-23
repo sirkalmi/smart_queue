@@ -12,60 +12,71 @@ Future<void> main() async {
   Directory appDocDir = await getApplicationDocumentsDirectory();
   final hiveDir = Directory('${appDocDir.path}/smart_queue_hive');
 
+  MemoryDeadLetterStore memoryDeadLetterStore = MemoryDeadLetterStore();
+
   if (!hiveDir.existsSync()) {
     hiveDir.createSync(recursive: true);
   }
 
   Hive.init(hiveDir.path);
 
-  final SmartQueue queue = SmartQueue(
-    store: HiveStore(boxName: 'jobs'),
-    config: SmartQueueConfig(
-      concurrency: 1,
-      retryStrategy: RetryStrategy.exponentialWithJitter(
-        initialDelay: const Duration(milliseconds: 200),
-        maxDelay: const Duration(seconds: 2),
-      ),
-    ),
-    handlers: {
-      'print': (payload) async {
-        log('JOB Started: ${payload['message']}');
-        await Future<void>.delayed(const Duration(seconds: 5));
-        log('JOB Ended: ${payload['message']}');
-      },
-      'flaky': (payload) async {
-        final int n = (payload['n'] as int? ?? 0);
-        if (n % 2 == 0) {
-          throw Exception('Simulated failure for even n=$n');
-        }
-        log('FLAKY OK: $n');
-      },
-    },
-  );
+  final SmartQueue queue =
+      SmartQueue(
+          store: HiveStore(boxName: 'jobs'),
+          config: SmartQueueConfig(
+            concurrency: 1,
+            retryStrategy: RetryStrategy.exponentialWithJitter(
+              initialDelay: const Duration(milliseconds: 200),
+              maxDelay: const Duration(seconds: 2),
+            ),
+          ),
+          deadLetterStore: memoryDeadLetterStore,
+        )
+        ..registerHandler('print', (payload) async {
+          await Future<void>.delayed(const Duration(seconds: 5));
+        })
+        ..registerHandler('smart_request', queueRequestHandler);
 
   await queue.start();
 
-  await queue.add(
-    SmartJob(id: '1', type: 'print', payload: {'message': 'Hello'}),
-  );
-  await queue.add(
-    SmartJob(id: '2', type: 'print', payload: {'message': 'Hello1'}),
-  );
-  await queue.add(
-    SmartJob(id: '3', type: 'print', payload: {'message': 'Hello2'}),
-  );
-  await queue.add(
-    SmartJob(id: '4', type: 'print', payload: {'message': 'Hello3'}),
-  );
-  await queue.add(
-    SmartJob(id: '2', type: 'flaky', payload: {'n': 2}, maxRetries: 2),
-  );
-  await queue.add(
-    SmartJob(id: '3', type: 'flaky', payload: {'n': 3}, maxRetries: 2),
-  );
+  // Observe queue events for UI/diagnostics
+  queue.events.listen((event) {
+    if (event is JobEnqueued) {
+      log('Enqueued ${event.job.id}');
+    } else if (event is JobEnqueued) {
+      log('Started ${event.job.id}');
+    } else if (event is JobProgress) {
+      log('Progress ${event.job.id}: ${event.progress}');
+    } else if (event is JobRetryScheduled) {
+      log('Retry ${event.job.id} in ${event.delay}');
+    } else if (event is JobDeadLettered) {
+      log('DLQ: ${event.job.id} error=${event.error}');
+    } else if (event is JobSucceeded) {
+      log('Success: ${event.job.id}');
+    } else if (event is JobFailed) {
+      log('Failed: ${event.job.id}:  error=${event.error}');
+    } else {
+      log('Un-Known: $event');
+    }
+  });
 
-  // Keep the example alive briefly to observe retries
-  await Future<void>.delayed(const Duration(seconds: 5));
+  for (int i = 0; i < 10; i++) {
+    await queue.add(
+      SmartJob(
+        id: (i).toString(),
+        type: 'print',
+        payload: {'message': 'Hello$i'},
+      ),
+    );
+  }
+
+  await queue.add(
+    createRequestJob(
+      id: 'req-1',
+      url: 'https://app.mobddvers.com/',
+      method: 'GET',
+    ),
+  );
 
   runApp(MyApp());
 }
@@ -75,6 +86,6 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Placeholder();
+    return Placeholder();
   }
 }
