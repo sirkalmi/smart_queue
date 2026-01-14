@@ -1,7 +1,60 @@
 import 'package:dio/dio.dart';
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:smart_request/smart_request.dart' as sr;
 
 import '../smart_job.dart';
+
+class PrettyDioLoggerConfigSerializable {
+  final bool request;
+  final bool requestHeader;
+  final bool requestBody;
+  final bool responseBody;
+  final bool responseHeader;
+  final bool error;
+  final bool compact;
+  final int maxWidth;
+  final bool enabled;
+
+  const PrettyDioLoggerConfigSerializable({
+    this.request = true,
+    this.requestHeader = false,
+    this.requestBody = false,
+    this.responseHeader = false,
+    this.responseBody = true,
+    this.error = true,
+    this.maxWidth = 90,
+    this.compact = true,
+    this.enabled = true,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'request': request,
+      'requestHeader': requestHeader,
+      'requestBody': requestBody,
+      'responseHeader': responseHeader,
+      'responseBody': responseBody,
+      'error': error,
+      'compact': compact,
+      'maxWidth': maxWidth,
+      'enabled': enabled,
+    };
+  }
+
+  static PrettyDioLoggerConfigSerializable fromMap(Map map) {
+    return PrettyDioLoggerConfigSerializable(
+      request: map['request'] ?? true,
+      requestHeader: map['requestHeader'] ?? false,
+      requestBody: map['requestBody'] ?? false,
+      responseHeader: map['responseHeader'] ?? false,
+      responseBody: map['responseBody'] ?? true,
+      error: map['error'] ?? true,
+      compact: map['compact'] ?? true,
+      maxWidth: map['maxWidth'] ?? 90,
+      enabled: map['enabled'] ?? true,
+    );
+  }
+}
 
 class SmartRequestConfigSerializable {
   const SmartRequestConfigSerializable({
@@ -46,6 +99,7 @@ class RequestJobPayloadKeys {
   static const String headers = 'headers';
   static const String body = 'body';
   static const String config = 'requestConfig';
+  static const String loggerConfig = 'loggerConfig';
 }
 
 SmartJob createRequestJob({
@@ -55,6 +109,7 @@ SmartJob createRequestJob({
   Map<String, String>? headers,
   Object? body,
   SmartRequestConfigSerializable? config,
+  PrettyDioLoggerConfigSerializable? loggerConfig,
   int priority = 0,
 }) {
   return SmartJob(
@@ -66,6 +121,8 @@ SmartJob createRequestJob({
       RequestJobPayloadKeys.headers: headers,
       RequestJobPayloadKeys.body: body,
       if (config != null) RequestJobPayloadKeys.config: config.toMap(),
+      if (loggerConfig != null)
+        RequestJobPayloadKeys.loggerConfig: loggerConfig.toMap(),
     },
     priority: priority,
   );
@@ -85,6 +142,12 @@ Future<void> queueRequestHandler(Map<String, dynamic> payload) async {
           payload[RequestJobPayloadKeys.config] as Map,
         )
       : const SmartRequestConfigSerializable();
+  final PrettyDioLoggerConfigSerializable? loggerCfg =
+      (payload[RequestJobPayloadKeys.loggerConfig] is Map)
+      ? PrettyDioLoggerConfigSerializable.fromMap(
+          payload[RequestJobPayloadKeys.loggerConfig] as Map,
+        )
+      : null;
 
   final Dio dio = Dio(
     BaseOptions(
@@ -94,6 +157,24 @@ Future<void> queueRequestHandler(Map<String, dynamic> payload) async {
       headers: headers,
     ),
   );
+  if (loggerCfg != null) {
+    dio.interceptors.add(
+      PrettyDioLogger(
+        request: loggerCfg.request,
+        requestHeader: loggerCfg.requestHeader,
+        requestBody: loggerCfg.requestBody,
+        responseHeader: loggerCfg.responseHeader,
+        responseBody: loggerCfg.responseBody,
+        error: loggerCfg.error,
+        compact: loggerCfg.compact,
+        maxWidth: loggerCfg.maxWidth,
+        enabled: loggerCfg.enabled,
+        filter: (options, args) {
+          return !args.isResponse || !args.hasUint8ListData;
+        },
+      ),
+    );
+  }
 
   Future<Response<dynamic>> operation() async {
     switch (method) {
