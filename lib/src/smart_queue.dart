@@ -1,14 +1,14 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
 
+import 'dlq/dead_letter_store.dart';
+import 'events/queue_events.dart';
 import 'retry_strategy.dart';
 import 'smart_job.dart';
 import 'storage/queue_store.dart';
-import 'dart:math' as math;
-import 'events/queue_events.dart';
-import 'dlq/dead_letter_store.dart';
 
 /// Runtime configuration for [SmartQueue]. Controls concurrency, retries,
 /// persistence cadence, and multi-instance execution leases.
@@ -84,6 +84,8 @@ class SmartQueue {
   bool _started = false;
   bool _disposed = false;
 
+  Completer<void>? _processingDoneCompleter;
+
   /// True if the queue has started and is not disposed.
   bool get isRunning => _started && !_disposed;
 
@@ -98,13 +100,18 @@ class SmartQueue {
   }
 
   /// Load persisted jobs and begin processing according to config.
-  Future<void> start() async {
-    if (_started) return;
+  Future<void> start({Completer<void>? processingDoneCompleter}) async {
+    _processingDoneCompleter = processingDoneCompleter;
+    if (_started) {
+      _tryComplete();
+      return;
+    }
     _started = true;
     // Load persisted jobs
     final List<SmartJob> jobs = await _store.loadJobs();
     jobs.sortBy((SmartJob j) => j.createdAt);
     _pending.addAll(jobs);
+    _tryComplete();
 
     // Kick off periodic persistence of in-memory queue state
     _persistTimer = Timer.periodic(_config.persistInterval, (_) async {
@@ -177,7 +184,8 @@ class SmartQueue {
   }
 
   Future<void> _runJob(SmartJob job) async {
-    if (_disposed) return;
+    if (_disposed || job.isExecuting) return;
+    job.isExecuting = true;
     final bool hasSimple = _handlers.containsKey(job.type);
     final bool hasCtx = _ctxHandlers.containsKey(job.type);
     if (!hasSimple && !hasCtx) {
@@ -187,6 +195,7 @@ class SmartQueue {
       _inFlight.remove(job.id);
       job.onFailure?.call(job, StateError(job.lastError!), StackTrace.current);
       _scheduleWork();
+      _tryComplete();
       return;
     }
 
@@ -258,8 +267,28 @@ class SmartQueue {
         job.onFailure?.call(job, err, st);
       }
     } finally {
+      job.isExecuting = false;
       // If success path did not schedule more, schedule now
       _scheduleWork();
+      _tryComplete();
+    }
+  }
+
+  Future<void> forceRetry(String jobId) async {
+    if (!_started || _disposed) return;
+    final SmartJob? job =
+        _inFlight[jobId] ?? _pending.firstWhereOrNull((e) => e.id == jobId);
+    if (job != null && !job.isExecuting) {
+      _pending.remove(job);
+      await _runJob(job);
+    }
+  }
+
+  void _tryComplete() {
+    if (_processingDoneCompleter != null &&
+        !_processingDoneCompleter!.isCompleted &&
+        _inFlight.isEmpty && _pending.isEmpty) {
+      _processingDoneCompleter!.complete();
     }
   }
 }

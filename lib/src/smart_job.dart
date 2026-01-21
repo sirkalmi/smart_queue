@@ -71,6 +71,8 @@ class SmartJob {
   JobFailureCallback? onFailure;
   JobRetryCallback? onRetry;
 
+  bool isExecuting = false;
+
   bool get hasRemainingRetries => attempts < (maxRetries + 1);
 
   Map<String, dynamic> toMap() {
