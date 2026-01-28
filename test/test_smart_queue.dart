@@ -91,4 +91,46 @@ void main() {
     expect(events.where((s) => s.startsWith('enq:')).toList().length, 2);
     expect(events.where((s) => s.startsWith('ok:')).toList().length, 2);
   });
+
+  test('same job cannot execute concurrently', () async {
+    final store = MemoryStore();
+
+    final queue = SmartQueue(
+      store: store,
+      config: const SmartQueueConfig(concurrency: 2),
+    );
+
+    int concurrentExecutions = 0;
+    int maxConcurrentExecutions = 0;
+
+    queue.registerHandler('test', (_) async {
+      concurrentExecutions++;
+      maxConcurrentExecutions = maxConcurrentExecutions > concurrentExecutions ? maxConcurrentExecutions : concurrentExecutions;
+
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      concurrentExecutions--;
+    });
+
+    final job = SmartJob(
+      id: 'job-1',
+      type: 'test',
+      payload: null,
+      maxRetries: 0,
+    );
+
+    await queue.start();
+    await queue.add(job);
+
+    queue.forceRetry(job.id);
+    queue.forceRetry(job.id);
+
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    expect(
+      maxConcurrentExecutions,
+      equals(1),
+      reason: 'The same job must never be executed concurrently',
+    );
+  });
 }

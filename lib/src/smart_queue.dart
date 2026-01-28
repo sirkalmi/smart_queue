@@ -186,6 +186,9 @@ class SmartQueue {
 
   Future<void> _runJob(SmartJob job) async {
     if (_disposed || _isExecutingJob(job.id)) return;
+
+    _executingJobIds.add(job.id);
+
     final bool hasSimple = _handlers.containsKey(job.type);
     final bool hasCtx = _ctxHandlers.containsKey(job.type);
     if (!hasSimple && !hasCtx) {
@@ -193,6 +196,7 @@ class SmartQueue {
       job.lastError = 'No handler for type ${job.type}';
       await _store.removeJob(job.id);
       _inFlight.remove(job.id);
+      _executingJobIds.remove(job.id);
       job.onFailure?.call(job, StateError(job.lastError!), StackTrace.current);
       _scheduleWork();
       _tryComplete();
