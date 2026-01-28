@@ -70,6 +70,7 @@ class SmartQueue {
       <String, JobHandlerWithContext>{};
   final Queue<SmartJob> _pending = Queue<SmartJob>();
   final Map<String, SmartJob> _inFlight = <String, SmartJob>{};
+  final Set<String> _executingJobIds = {};
 
   final String _ownerId;
   final DeadLetterStore? _dlq;
@@ -184,8 +185,7 @@ class SmartQueue {
   }
 
   Future<void> _runJob(SmartJob job) async {
-    if (_disposed || job.isExecuting) return;
-    job.isExecuting = true;
+    if (_disposed || _isExecutingJob(job.id)) return;
     final bool hasSimple = _handlers.containsKey(job.type);
     final bool hasCtx = _ctxHandlers.containsKey(job.type);
     if (!hasSimple && !hasCtx) {
@@ -216,6 +216,8 @@ class SmartQueue {
         _scheduleWork();
         return;
       }
+
+      _executingJobIds.add(job.id);
 
       final JobHandler? handler = _handlers[job.type];
       final JobHandlerWithContext? ctx = _ctxHandlers[job.type];
@@ -267,7 +269,7 @@ class SmartQueue {
         job.onFailure?.call(job, err, st);
       }
     } finally {
-      job.isExecuting = false;
+      _executingJobIds.remove(job.id);
       // If success path did not schedule more, schedule now
       _scheduleWork();
       _tryComplete();
@@ -275,13 +277,17 @@ class SmartQueue {
   }
 
   Future<void> forceRetry(String jobId) async {
-    if (!_started || _disposed) return;
+    if (!_started || _disposed || _isExecutingJob(jobId)) return;
     final SmartJob? job =
         _inFlight[jobId] ?? _pending.firstWhereOrNull((e) => e.id == jobId);
-    if (job != null && !job.isExecuting) {
+    if (job != null) {
       _pending.remove(job);
       await _runJob(job);
     }
+  }
+  
+  bool _isExecutingJob(String jobId) {
+    return _executingJobIds.contains(jobId);
   }
 
   void _tryComplete() {
