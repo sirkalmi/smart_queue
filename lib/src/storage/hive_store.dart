@@ -49,6 +49,18 @@ class HiveStore implements QueueStore {
   }
 
   @override
+  Future<SmartJob?> getJob(String id) async {
+    final Box<Map<dynamic, dynamic>> box = await _openBox();
+    final Map<dynamic, dynamic>? data = box.get(id);
+
+    if (data == null) {
+      return null;
+    }
+
+    return SmartJob.fromMap(data);
+  }
+
+  @override
   Future<bool> tryAcquireLease(String id, String ownerId, Duration ttl) async {
     final Box<Map<dynamic, dynamic>> box = await _openBox();
     final Map<dynamic, dynamic>? existing = box.get(id);

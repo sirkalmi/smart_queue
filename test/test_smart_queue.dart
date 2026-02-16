@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:test/test.dart';
 import 'package:smart_queue/smart_queue.dart';
+import 'package:test/test.dart';
 
 void main() {
   test('executes jobs and persists state', () async {
@@ -103,13 +103,23 @@ void main() {
     int concurrentExecutions = 0;
     int maxConcurrentExecutions = 0;
 
+    final completer = Completer<void>();
+
     queue.registerHandler('test', (_) async {
       concurrentExecutions++;
-      maxConcurrentExecutions = maxConcurrentExecutions > concurrentExecutions ? maxConcurrentExecutions : concurrentExecutions;
+      maxConcurrentExecutions = concurrentExecutions > maxConcurrentExecutions
+          ? concurrentExecutions
+          : maxConcurrentExecutions;
 
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       concurrentExecutions--;
+    });
+
+    queue.events.listen((event) {
+      if (event is JobSucceeded) {
+        completer.complete();
+      }
     });
 
     final job = SmartJob(
@@ -125,12 +135,64 @@ void main() {
     queue.forceRetry(job.id);
     queue.forceRetry(job.id);
 
-    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await completer.future;
 
     expect(
       maxConcurrentExecutions,
-      equals(1),
+      1,
       reason: 'The same job must never be executed concurrently',
+    );
+  });
+
+  test('forceRetry can duplicate execution with async store', () async {
+    final store = MemoryStore();
+
+    final queue = SmartQueue(
+      store: store,
+      config: const SmartQueueConfig(
+        concurrency: 1,
+        retryStrategy: FixedRetryStrategy(Duration(milliseconds: 50)),
+      ),
+    );
+
+    int attempt = 0;
+    int succeededJobs = 0;
+
+    final retryScheduled = Completer<void>();
+
+    queue.registerHandler('test', (_) async {
+      attempt++;
+      if (attempt == 1) {
+        throw Exception('fail first attempt');
+      }
+      await Future.delayed(const Duration(milliseconds: 5));
+    });
+
+    queue.events.listen((event) {
+      if (event is JobRetryScheduled) {
+        retryScheduled.complete();
+      }
+      if (event is JobSucceeded) {
+        succeededJobs++;
+      }
+    });
+
+    final job = SmartJob(id: 'job-1', type: 'test', maxRetries: 2);
+
+    await queue.start();
+    await queue.add(job);
+
+    await retryScheduled.future;
+
+    await queue.forceRetry(job.id);
+
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    expect(
+      succeededJobs,
+      1,
+      reason:
+          'Job must succeed exactly once even if forceRetry is called while retry timer is pending',
     );
   });
 }

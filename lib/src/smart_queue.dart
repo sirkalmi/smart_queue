@@ -253,6 +253,7 @@ class SmartQueue {
         // Re-enqueue with delay
         Timer(delay, () async {
           if (_disposed) return;
+          if ((await _store.getJob(job.id)) == null) return;
           _inFlight.remove(job.id);
           _pending.addLast(job);
           await _store.putJob(job);
