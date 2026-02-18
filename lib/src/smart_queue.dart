@@ -71,6 +71,7 @@ class SmartQueue {
   final Queue<SmartJob> _pending = Queue<SmartJob>();
   final Map<String, SmartJob> _inFlight = <String, SmartJob>{};
   final Set<String> _executingJobIds = {};
+  final Map<String, Timer> _retryTimers = {};
 
   final String _ownerId;
   final DeadLetterStore? _dlq;
@@ -126,6 +127,10 @@ class SmartQueue {
   Future<void> dispose() async {
     _disposed = true;
     _persistTimer?.cancel();
+    for (final timer in _retryTimers.values) {
+      timer.cancel();
+    }
+    _retryTimers.clear();
     // No explicit close for store; user manages underlying resources
   }
 
@@ -251,15 +256,17 @@ class SmartQueue {
         job.onRetry?.call(job, job.attempts, delay);
         _events.add(JobRetryScheduled(job, job.attempts, delay));
         // Re-enqueue with delay
-        Timer(delay, () async {
+        _retryTimers[job.id]?.cancel();
+        final timer = Timer(delay, () async {
           if (_disposed) return;
-          if ((await _store.getJob(job.id)) == null) return;
+          _retryTimers.remove(job.id);
           _inFlight.remove(job.id);
           _pending.addLast(job);
           await _store.putJob(job);
           // Immediately attempt to run next available job (prevents idle at concurrency=1)
           _scheduleWork();
         });
+        _retryTimers[job.id] = timer;
       } else {
         // Exhausted
         await _store.removeJob(job.id);
@@ -286,6 +293,7 @@ class SmartQueue {
     final SmartJob? job =
         _inFlight[jobId] ?? _pending.firstWhereOrNull((e) => e.id == jobId);
     if (job != null) {
+      _retryTimers[job.id]?.cancel();
       _pending.remove(job);
       await _runJob(job);
     }
