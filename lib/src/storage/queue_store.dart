@@ -5,6 +5,7 @@ abstract class QueueStore {
   Future<void> putJob(SmartJob job);
   Future<void> removeJob(String id);
   Future<SmartJob?> getJob(String id);
+  Future<bool> existJob(String id);
   Future<void> clear();
 
   /// Try to acquire a short-lived lease for [id]. Returns true if acquired.

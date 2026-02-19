@@ -42,6 +42,12 @@ class MemoryStore implements QueueStore {
   }
 
   @override
+  Future<bool> existJob(String id) async {
+    final int index = _jobs.indexWhere((SmartJob j) => j.id == id);
+    return index >= 0;
+  }
+
+  @override
   Future<bool> tryAcquireLease(String id, String ownerId, Duration ttl) async {
     final int idx = _jobs.indexWhere((SmartJob j) => j.id == id);
     if (idx < 0) return false;

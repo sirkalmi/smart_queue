@@ -50,24 +50,27 @@ class SmartQueue {
     SmartQueueConfig config = const SmartQueueConfig(),
     Map<String, JobHandler>? handlers,
     DeadLetterStore? deadLetterStore,
-  }) : _store = store,
-       _config = config,
-       _ownerId = config.ownerId ?? _generateOwnerId(),
-       _dlq = deadLetterStore {
+  })
+      : _store = store,
+        _config = config,
+        _ownerId = config.ownerId ?? _generateOwnerId(),
+        _dlq = deadLetterStore {
     if (handlers != null) {
       _handlers.addAll(handlers);
     }
   }
 
   static String _generateOwnerId() =>
-      '${DateTime.now().millisecondsSinceEpoch}-${math.Random().nextInt(1 << 32)}';
+      '${DateTime
+          .now()
+          .millisecondsSinceEpoch}-${math.Random().nextInt(1 << 32)}';
 
   final QueueStore _store;
   final SmartQueueConfig _config;
 
   final Map<String, JobHandler> _handlers = <String, JobHandler>{};
   final Map<String, JobHandlerWithContext> _ctxHandlers =
-      <String, JobHandlerWithContext>{};
+  <String, JobHandlerWithContext>{};
   final Queue<SmartJob> _pending = Queue<SmartJob>();
   final Map<String, SmartJob> _inFlight = <String, SmartJob>{};
   final Set<String> _executingJobIds = {};
@@ -77,7 +80,7 @@ class SmartQueue {
   final DeadLetterStore? _dlq;
 
   final StreamController<QueueEvent> _events =
-      StreamController<QueueEvent>.broadcast();
+  StreamController<QueueEvent>.broadcast();
 
   /// Stream of lifecycle events for observability and UI.
   Stream<QueueEvent> get events => _events.stream;
@@ -85,6 +88,7 @@ class SmartQueue {
   Timer? _persistTimer;
   bool _started = false;
   bool _disposed = false;
+  bool _isScheduling = false;
 
   Completer<void>? _processingDoneCompleter;
 
@@ -162,20 +166,31 @@ class SmartQueue {
 
   void _scheduleWork() {
     if (!_started || _disposed) return;
-    // Run as many as allowed by concurrency with basic scheduling
-    while (_inFlight.length < _config.concurrency && _pending.isNotEmpty) {
-      final SmartJob? next = _selectNextJob();
-      if (next == null) break;
-      // Start immediately so _inFlight updates before next iteration
-      _runJob(next);
-    }
+    if (_isScheduling) return;
+
+    Future.microtask(() async {
+      try {
+        if (_isScheduling) return;
+        _isScheduling = true;
+
+        // Run as many as allowed by concurrency with basic scheduling
+        while (_inFlight.length < _config.concurrency && _pending.isNotEmpty) {
+          final SmartJob? next = _selectNextJob();
+          if (next == null) break;
+          // Start immediately so _inFlight updates before next iteration
+          _runJob(next);
+        }
+      } finally {
+        _isScheduling = false;
+      }
+    });
   }
 
   SmartJob? _selectNextJob() {
     if (_pending.isEmpty) return null;
     final DateTime now = DateTime.now();
     final Iterable<SmartJob> runnable = _pending.where(
-      (SmartJob j) => j.scheduledAt == null || !j.scheduledAt!.isAfter(now),
+          (SmartJob j) => j.scheduledAt == null || !j.scheduledAt!.isAfter(now),
     );
     if (runnable.isEmpty) return null;
     SmartJob? best;
@@ -203,7 +218,6 @@ class SmartQueue {
       _inFlight.remove(job.id);
       _executingJobIds.remove(job.id);
       job.onFailure?.call(job, StateError(job.lastError!), StackTrace.current);
-      _scheduleWork();
       _tryComplete();
       return;
     }
@@ -218,11 +232,13 @@ class SmartQueue {
         _ownerId,
         _config.leaseTtl,
       );
+      final existJob = await _store.existJob(job.id);
       if (!leased) {
         _inFlight.remove(job.id);
         // Put at tail to avoid tight retry loop under contention
-        _pending.add(job);
-        _scheduleWork();
+        if (existJob) {
+          _pending.add(job);
+        }
         return;
       }
 
@@ -298,7 +314,7 @@ class SmartQueue {
       await _runJob(job);
     }
   }
-  
+
   bool _isExecutingJob(String jobId) {
     return _executingJobIds.contains(jobId);
   }
