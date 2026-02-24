@@ -82,4 +82,8 @@ class MemoryStore implements QueueStore {
       _jobs[idx] = job;
     }
   }
+
+  @override
+  Future<void> close() async {
+  }
 }

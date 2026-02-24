@@ -7,6 +7,7 @@ abstract class QueueStore {
   Future<SmartJob?> getJob(String id);
   Future<bool> existJob(String id);
   Future<void> clear();
+  Future<void> close();
 
   /// Try to acquire a short-lived lease for [id]. Returns true if acquired.
   Future<bool> tryAcquireLease(String id, String ownerId, Duration ttl) async =>

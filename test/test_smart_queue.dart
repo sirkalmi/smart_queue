@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:isolate';
 
+import 'package:hive/hive.dart';
 import 'package:smart_queue/smart_queue.dart';
 import 'package:test/test.dart';
 
@@ -194,5 +197,195 @@ void main() {
       reason:
           'Job must succeed exactly once even if forceRetry is called while retry timer is pending',
     );
+  });
+
+  Future<SmartQueue> initSmartQueue(Map<String, dynamic> args) async {
+    final String ownerId = args['ownerId'];
+    final SendPort sendPort = args['sendPort'];
+    final DateTime startTime = args['startTime'];
+    final HiveStore store = args['store'];
+
+    print('init [$ownerId] store size: ${(await store.loadJobs()).length}');
+
+    final queue = SmartQueue(
+      store: store,
+      config: SmartQueueConfig(
+        concurrency: 1,
+        ownerId: ownerId,
+        retryStrategy: FixedRetryStrategy(Duration(milliseconds: 100)),
+      ),
+    );
+
+    queue.registerHandler('job', (payload) async {
+      int difference = DateTime.now().difference(startTime).inMilliseconds;
+      if (ownerId == 'A' && difference <= 1000) {
+        throw Exception('Planed exception $difference');
+      }
+      await Future.delayed(const Duration(milliseconds: 90));
+      sendPort.send(payload['id'] as String);
+    });
+
+    queue.events.listen((event) {
+      switch (event) {
+        case JobEnqueued(:final job) ||
+            JobStarted(:final job) ||
+            JobProgress(:final job) ||
+            JobRetryScheduled(:final job) ||
+            JobSucceeded(:final job) ||
+            JobFailed(:final job) ||
+            JobDeadLettered(:final job):
+          print(
+            '[SmartQueue] ${event.runtimeType} '
+            'jobId: ${job.id}, '
+            'queue size: ${queue.length}',
+          );
+      }
+    });
+
+    await queue.start();
+
+    return queue;
+  }
+
+  Future<void> queueAIsolateEntry(Map<String, dynamic> args) async {
+    final String ownerId = args['ownerId'];
+    final SendPort sendPort = args['sendPort'];
+    final List<SmartJob>? jobs = args['jobs'];
+    final String dbPath = args['dbPath'];
+    final store = HiveStore(boxName: 'jobs');
+    Directory(dbPath).createSync(recursive: true);
+    Hive.init(dbPath);
+    args['store'] = store;
+
+    SmartQueue? queue;
+
+    final commandPort = ReceivePort();
+    sendPort.send(commandPort.sendPort);
+
+    commandPort.listen((message) async {
+      print('lifecycle $ownerId is $message');
+
+      if (message == 'pause' && queue != null) {
+        print('dispose $ownerId SmartQueue');
+        await queue?.dispose();
+        await store.close();
+      }
+      if (message == 'resume') {
+        queue = await initSmartQueue(args);
+      }
+      if (message == 'addjobs') {
+        print('add jobs');
+        if (jobs != null) {
+          for (final job in jobs) {
+            await queue?.add(job);
+          }
+        }
+      }
+    });
+  }
+
+  Future<void> queueBIsolateEntry(Map<String, dynamic> args) async {
+    final String ownerId = args['ownerId'];
+    final SendPort sendPort = args['sendPort'];
+    final String dbPath = args['dbPath'];
+    final store = HiveStore(boxName: 'jobs');
+    Directory(dbPath).createSync(recursive: true);
+    Hive.init(dbPath);
+    args['store'] = store;
+
+    SmartQueue? queue;
+
+    final commandPort = ReceivePort();
+    sendPort.send(commandPort.sendPort);
+
+    commandPort.listen((message) async {
+      print('lifecycle $ownerId is $message');
+
+      if (message == 'pause' && queue != null) {
+        print('dispose $ownerId SmartQueue');
+        await queue?.dispose();
+        await store.close();
+      }
+      if (message == 'resume') {
+        queue = await initSmartQueue(args);
+      }
+    });
+  }
+
+  test('race condition with two isolates', () async {
+    final String dbPath = './hive_test/hive';
+
+    final List<SmartJob> jobs = List.generate(
+      10,
+      (i) => SmartJob(
+        id: 'job-$i',
+        type: 'job',
+        payload: {'id': 'job-$i'},
+        maxRetries: 100,
+      ),
+    );
+
+    final receivePortA = ReceivePort();
+    final receivePortB = ReceivePort();
+    SendPort? commandPortA;
+    SendPort? commandPortB;
+    final processedJobs = <String>[];
+
+    receivePortA.listen((message) {
+      if (message is String) processedJobs.add(message);
+      if (message is SendPort) commandPortA = message;
+    });
+    receivePortB.listen((message) {
+      if (message is String) processedJobs.add(message);
+      if (message is SendPort) commandPortB = message;
+    });
+
+    final isolateA = await Isolate.spawn(queueAIsolateEntry, {
+      'ownerId': 'A',
+      'sendPort': receivePortA.sendPort,
+      'jobs': jobs,
+      'dbPath': dbPath,
+      'startTime': DateTime.now(),
+    });
+    await Future.delayed(const Duration(milliseconds: 100));
+    commandPortA?.send('resume');
+    await Future.delayed(const Duration(milliseconds: 100));
+    commandPortA?.send('addjobs');
+    await Future.delayed(const Duration(milliseconds: 1000));
+    commandPortA?.send('pause');
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final isolateB = await Isolate.spawn(queueBIsolateEntry, {
+      'ownerId': 'B',
+      'sendPort': receivePortB.sendPort,
+      'dbPath': dbPath,
+      'producer': false,
+      'startTime': DateTime.now(),
+    });
+    await Future.delayed(const Duration(milliseconds: 100));
+    commandPortB?.send('resume');
+    await Future.delayed(const Duration(milliseconds: 500));
+    commandPortB?.send('pause');
+    await Future.delayed(const Duration(milliseconds: 500));
+    print('kill B isolate');
+    isolateB.kill(priority: Isolate.immediate);
+
+    await Future.delayed(const Duration(milliseconds: 100));
+    commandPortA?.send('resume');
+
+    await Future<void>.delayed(const Duration(seconds: 5));
+
+    receivePortA.close();
+    receivePortB.close();
+    isolateA.kill(priority: Isolate.immediate);
+
+    expect(
+      processedJobs.length,
+      10,
+      reason:
+          'Race condition detected: some jobs may have been processed by both queues',
+    );
+
+    print('Processed jobs: $processedJobs');
   });
 }

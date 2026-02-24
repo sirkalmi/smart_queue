@@ -50,27 +50,24 @@ class SmartQueue {
     SmartQueueConfig config = const SmartQueueConfig(),
     Map<String, JobHandler>? handlers,
     DeadLetterStore? deadLetterStore,
-  })
-      : _store = store,
-        _config = config,
-        _ownerId = config.ownerId ?? _generateOwnerId(),
-        _dlq = deadLetterStore {
+  }) : _store = store,
+       _config = config,
+       _ownerId = config.ownerId ?? _generateOwnerId(),
+       _dlq = deadLetterStore {
     if (handlers != null) {
       _handlers.addAll(handlers);
     }
   }
 
   static String _generateOwnerId() =>
-      '${DateTime
-          .now()
-          .millisecondsSinceEpoch}-${math.Random().nextInt(1 << 32)}';
+      '${DateTime.now().millisecondsSinceEpoch}-${math.Random().nextInt(1 << 32)}';
 
   final QueueStore _store;
   final SmartQueueConfig _config;
 
   final Map<String, JobHandler> _handlers = <String, JobHandler>{};
   final Map<String, JobHandlerWithContext> _ctxHandlers =
-  <String, JobHandlerWithContext>{};
+      <String, JobHandlerWithContext>{};
   final Queue<SmartJob> _pending = Queue<SmartJob>();
   final Map<String, SmartJob> _inFlight = <String, SmartJob>{};
   final Set<String> _executingJobIds = {};
@@ -80,7 +77,7 @@ class SmartQueue {
   final DeadLetterStore? _dlq;
 
   final StreamController<QueueEvent> _events =
-  StreamController<QueueEvent>.broadcast();
+      StreamController<QueueEvent>.broadcast();
 
   /// Stream of lifecycle events for observability and UI.
   Stream<QueueEvent> get events => _events.stream;
@@ -190,7 +187,7 @@ class SmartQueue {
     if (_pending.isEmpty) return null;
     final DateTime now = DateTime.now();
     final Iterable<SmartJob> runnable = _pending.where(
-          (SmartJob j) => j.scheduledAt == null || !j.scheduledAt!.isAfter(now),
+      (SmartJob j) => j.scheduledAt == null || !j.scheduledAt!.isAfter(now),
     );
     if (runnable.isEmpty) return null;
     SmartJob? best;
@@ -299,7 +296,7 @@ class SmartQueue {
     } finally {
       _executingJobIds.remove(job.id);
       // If success path did not schedule more, schedule now
-      _scheduleWork();
+      Future.delayed(const Duration(milliseconds: 100), () => _scheduleWork());
       _tryComplete();
     }
   }
@@ -322,7 +319,8 @@ class SmartQueue {
   void _tryComplete() {
     if (_processingDoneCompleter != null &&
         !_processingDoneCompleter!.isCompleted &&
-        _inFlight.isEmpty && _pending.isEmpty) {
+        _inFlight.isEmpty &&
+        _pending.isEmpty) {
       _processingDoneCompleter!.complete();
     }
   }

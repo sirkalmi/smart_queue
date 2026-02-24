@@ -104,4 +104,12 @@ class HiveStore implements QueueStore {
       await box.put(id, existing.cast<String, dynamic>());
     }
   }
+
+  @override
+  Future<void> close() async {
+    if (_box?.isOpen == true) {
+      await _box?.flush();
+      await _box?.close();
+    }
+  }
 }
