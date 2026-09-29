@@ -51,7 +51,7 @@ dart pub get
 ## Quick start
 
 ```dart
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:smart_queue/smart_queue.dart';
 
 Future<void> main() async {
@@ -241,7 +241,7 @@ queue.events.listen((e) {
 | Backend | Package | Persistence | Notes |
 |---|---|---|---|
 | MemoryStore | built-in | No | Best for tests/dev. |
-| HiveStore | hive | Yes | Initialize Hive first; supports metadata for leases. |
+| HiveStore | hive_ce | Yes | Initialize Hive CE first; supports metadata for leases. |
 
 ### Dead letter queue
 
